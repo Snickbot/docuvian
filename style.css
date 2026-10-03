@@ -29,4 +29,5 @@ header button{min-height:36px;background:none;border-color:#fff8;color:#fff}
 summary{min-height:44px;display:flex;align-items:center;cursor:pointer;gap:6px}
 details.card{padding:4px 14px 14px}
 img.ref{max-width:100%;max-height:200px;border-radius:6px;display:block;margin-top:8px}
+.qrow{border-top:1px solid var(--line);padding:10px 0}
 :focus-visible{outline:3px solid #e0a100;outline-offset:2px}
