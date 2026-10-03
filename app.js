@@ -3,6 +3,8 @@ const KEY = 'docuvian.v1';
 const app = document.getElementById('app');
 const homeBtn = document.getElementById('home');
 let db = load(), pid = null;
+db.projects.forEach(p => (p.jobs || []).forEach(j => { if (j.status === 'PROCESSING' || j.status === 'RETRYING') j.status = 'WAITING'; }));
+const label = t => { t = String(t).replace('_', ' ').toLowerCase(); return t[0].toUpperCase() + t.slice(1); };
 
 function load() { try { return JSON.parse(localStorage.getItem(KEY)) || { projects: [] }; } catch (e) { return { projects: [] }; } }
 function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { alert('Browser storage is full. Remove some reference images or scenes, then try again.'); } }
@@ -13,7 +15,7 @@ const words = t => (t.trim().match(/\S+/g) || []).length;
 
 function newScene(narration, title) {
   return { id: uid(), title: title || 'Untitled scene', narration: narration || '', dur: Math.max(3, Math.round(words(narration || '') / 2.5)),
-    visual: '', prompt: '', ref: '', status: 'Waiting', error: '' };
+    visual: '', prompt: '', ref: '', provider: '', status: 'Waiting', error: '' };
 }
 
 function splitScript(text) {
@@ -68,9 +70,10 @@ function projectView() {
   app.innerHTML = `<h1>${esc(p.title)}</h1>
   <div class="mute">${p.ratio} · ${esc(p.lang)} · ${esc(p.style)} · ${esc(p.narr)} · target ${p.mins} min</div>
   <div class="card" id="dash"></div>
+  <div class="card" id="queue"></div>
   <div class="row"><button data-act="addscene">Add scene</button></div><div style="height:12px"></div>
   ${p.scenes.map((s, i) => sceneHTML(s, i, p.scenes.length)).join('')}`;
-  dash();
+  ui(); runQueue(p.id);
 }
 
 function dash() {
@@ -83,12 +86,12 @@ function dash() {
   <div class="stats"><div><b>${ready} / ${n}</b>scenes with narration and prompt</div>
   <div><b>${pics} / ${n}</b>scenes with reference image</div>
   <div><b>${Math.floor(secs / 60)}m ${secs % 60}s</b>estimated length</div>
-  <div><b>0 / ${n}</b>videos generated. Provider not connected.</div>
+  <div><b>${p.scenes.filter(s => String(s.status).toUpperCase() === 'COMPLETED').length} / ${n}</b>clips completed (mock providers only)</div>
   <div><b>Not built yet</b>voiceover</div><div><b>Not built yet</b>captions and final assembly</div></div>`;
 }
 
 function sceneHTML(s, i, n) {
-  return `<details class="card" data-i="${i}"><summary><b>${i + 1}.</b> ${esc(s.title)}<span class="tag">${esc(s.status)}</span></summary>
+  return `<details class="card" data-i="${i}"><summary><b>${i + 1}.</b> ${esc(s.title)}<span class="tag">${label(s.status)}</span></summary>
   <label>Title<input data-f="title" value="${esc(s.title)}"></label>
   <label>Narration<textarea data-f="narration">${esc(s.narration)}</textarea></label>
   <label>Visual description<textarea data-f="visual">${esc(s.visual)}</textarea></label>
@@ -96,7 +99,7 @@ function sceneHTML(s, i, n) {
   <label>Duration (seconds)<input data-f="dur" type="number" min="1" value="${s.dur}"></label>
   <label>Reference image<input type="file" accept="image/*" data-img></label>
   ${s.ref ? `<img class="ref" src="${s.ref}" alt="Reference for scene ${i + 1}"><div class="row"><button class="alt" data-act="rmimg">Remove image</button></div>` : ''}
-  <p class="mute">Provider: none. Video generation arrives in Phase 3.</p>
+  <label>Provider<select data-f="provider"><option value="">Auto (by priority)</option>${PROVIDERS.map(x => `<option value="${x.id}" ${s.provider === x.id ? 'selected' : ''} ${s.ref && !x.caps.refs ? 'disabled' : ''}>${esc(x.name)}${s.ref && !x.caps.refs ? ' (no reference images)' : ''}</option>`).join('')}</select></label>
   <div class="row"><button class="alt" data-act="up" ${i === 0 ? 'disabled' : ''}>Move up</button><button class="alt" data-act="down" ${i === n - 1 ? 'disabled' : ''}>Move down</button>
   <button class="alt" data-act="dup">Duplicate</button><button class="bad" data-act="del">Delete</button></div></details>`;
 }
@@ -112,6 +115,7 @@ app.addEventListener('submit', e => {
 
 app.addEventListener('change', async e => {
   const t = e.target, card = t.closest('[data-i]');
+  if (t.dataset.p) { proj()[t.dataset.p] = Math.min(5, Math.max(1, +t.value || 2)); save(); return; }
   if (!card) return;
   const s = proj().scenes[+card.dataset.i];
   if (t.dataset.f) { s[t.dataset.f] = t.type === 'number' ? Math.max(1, +t.value || 1) : t.value; save(); dash(); if (t.dataset.f === 'title') card.querySelector('summary').childNodes[2].textContent = ' ' + t.value; }
@@ -126,6 +130,7 @@ app.addEventListener('click', e => {
   const a = b.dataset.act, card = b.closest('[data-i]'), i = card ? +card.dataset.i : -1;
   if (a === 'open') { pid = b.dataset.id; return projectView(); }
   if (a === 'delproj') { if (confirm('Delete this project and all its scenes?')) { db.projects = db.projects.filter(p => p.id !== b.dataset.id); save(); homeView(); } return; }
+  if (['gen', 'genall', 'retryfailed', 'copy', 'dlref', 'markdone'].includes(a)) return queueAct(a, i);
   const sc = proj().scenes;
   if (a === 'addscene') sc.push(newScene('', 'Scene ' + (sc.length + 1)));
   else if (a === 'up' && i > 0) [sc[i - 1], sc[i]] = [sc[i], sc[i - 1]];
